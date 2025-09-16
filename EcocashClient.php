@@ -1,47 +1,66 @@
 <?php
+
 /**
  * Ecocash Open API PHP Client
  *
- * PSR-4 compatible single-file library for Payments, Refunds and Transaction Lookup.
- * - PHP 7.4+
- * - Uses cURL internally (no external dependencies)
+ * A PSR-4 compatible PHP client for the Ecocash Open API, providing a
+ * streamlined interface for payments, refunds, and transaction lookups.
  *
- * Usage: place under namespace Ecocash and autoload via Composer or require directly.
+ * - PHP 8.1+
+ * - Uses cURL internally (no external dependencies)
+ * - Adheres to modern PHP standards and practices.
+ *
+ * Usage:
+ * Install with Composer: `composer require your-namespace/ecocash-client`
+ * or include the file directly.
  *
  * Author: Generated for Dexter Wurayayi
- * License: MIT (adjust as needed)
+ * License: MIT
  */
 
 namespace Ecocash;
 
 use Exception;
+use JsonException;
 
+// Custom exception classes for clearer error handling
 class EcocashException extends Exception {}
 class EcocashValidationException extends EcocashException {}
+class EcocashNetworkException extends EcocashException {}
 
 class EcocashClient
 {
-    private string $apiKey;
-    private string $baseUrl;
-    private string $mode; // 'sandbox' or 'live'
-    private int $timeout = 30;
+    private const BASE_URL = 'https://developers.ecocash.co.zw/api/ecocash_pay';
+    private const TIMEOUT = 30;
+    
+    // Class properties are now readonly for immutability
+    private readonly string $apiKey;
+    private readonly string $baseUrl;
+    private readonly string $mode;
+    private int $timeout;
 
     /**
-     * Constructor
-     *
-     * @param string $apiKey   X-API-KEY provided by Ecocash
-     * @param string $mode    'sandbox' or 'live' (default: sandbox)
-     * @param string|null $baseUrl  Optional base URL override
+     * @param string $apiKey Your X-API-KEY from Ecocash.
+     * @param string $mode   'sandbox' or 'live'.
+     * @param string|null $baseUrl Optional base URL override.
      */
     public function __construct(string $apiKey, string $mode = 'sandbox', ?string $baseUrl = null)
     {
+        // Use a match expression for clean, explicit mode validation
+        $this->mode = match (strtolower($mode)) {
+            'live' => 'live',
+            default => 'sandbox',
+        };
+
         $this->apiKey = $apiKey;
-        $this->mode = $mode === 'live' ? 'live' : 'sandbox';
-        $this->baseUrl = rtrim($baseUrl ?? 'https://developers.ecocash.co.zw/api/ecocash_pay/', '/');
+        $this->baseUrl = rtrim($baseUrl ?? self::BASE_URL, '/');
+        $this->timeout = self::TIMEOUT;
     }
 
     /**
-     * Set request timeout seconds
+     * Set the request timeout in seconds.
+     *
+     * @param int $seconds Minimum timeout is 5 seconds.
      */
     public function setTimeout(int $seconds): void
     {
@@ -49,145 +68,171 @@ class EcocashClient
     }
 
     /**
-     * Do a payment (C2B instant)
+     * Do a C2B (Customer-to-Business) instant payment.
      *
-     * @param string $customerMsisdn (e.g. 263774222475)
-     * @param float  $amount
-     * @param string $reason
-     * @param string $currency
-     * @param string $sourceReference UUID string
-     * @return array decoded JSON response
-     * @throws EcocashException
+     * @param string $customerMsisdn The customer's mobile number (e.g., '263774222475').
+     * @param float $amount The payment amount.
+     * @param string $reason A description for the payment.
+     * @param string $currency The currency code (e.g., 'USD').
+     * @param string|null $sourceReference A unique UUID for the transaction.
+     *
+     * @return array The decoded JSON response from the API.
+     *
+     * @throws EcocashValidationException If input parameters are invalid.
+     * @throws EcocashException If the API request fails.
      */
-    public function payment(string $customerMsisdn, float $amount, string $reason = 'Payment', string $currency = 'USD', string $sourceReference = ''): array
+    public function payment(string $customerMsisdn, float $amount, string $reason = 'Payment', string $currency = 'USD', ?string $sourceReference = null): array
     {
-        if ($sourceReference === '') {
-            $sourceReference = $this->generateUuidV4();
-        }
+        $sourceReference ??= $this->generateUuidV4();
         if (!$this->isValidUuid($sourceReference)) {
-            throw new EcocashValidationException('sourceReference must be a valid UUID');
+            throw new EcocashValidationException('`sourceReference` must be a valid UUID.');
         }
 
         $payload = [
-            'customerMsisdn' => $customerMsisdn,
+            'customerMsisdn' => self::normalizeMsisdn($customerMsisdn),
             'amount' => $this->normalizeAmount($amount),
             'reason' => $reason,
             'currency' => $currency,
             'sourceReference' => $sourceReference,
         ];
 
-        $path = sprintf('/api/v2/payment/instant/c2b/%s', $this->mode);
+        $path = "/api/v2/payment/instant/c2b/{$this->mode}";
         return $this->request('POST', $path, $payload);
     }
 
     /**
-     * Issue a refund (instant C2B refund)
+     * Issue an instant C2B refund.
      *
-     * @param string $origEcocashRef  original Ecocash transaction reference (UUID)
-     * @param string $refundCorrelator merchant generated correlator
-     * @param string $sourceMobileNumber recipient mobile number (e.g. 263774222475)
-     * @param float $amount
-     * @param string $clientName
-     * @param string $currency
-     * @param string $reason
-     * @return array
-     * @throws EcocashException
+     * @param string $originalEcocashRef The original Ecocash transaction reference (UUID).
+     * @param string $refundCorrelator A merchant-generated unique correlator.
+     * @param string $sourceMobileNumber The recipient's mobile number.
+     * @param float $amount The refund amount.
+     * @param string $clientName The name of the client.
+     * @param string $currency The currency code (e.g., 'ZiG').
+     * @param string $reason A reason for the refund.
+     *
+     * @return array The decoded JSON response from the API.
+     *
+     * @throws EcocashValidationException If input parameters are invalid.
+     * @throws EcocashException If the API request fails.
      */
-    public function refund(string $origEcocashRef, string $refundCorrelator, string $sourceMobileNumber, float $amount, string $clientName = '', string $currency = 'ZiG', string $reason = ''): array
+    public function refund(string $originalEcocashRef, string $refundCorrelator, string $sourceMobileNumber, float $amount, string $clientName = '', string $currency = 'ZiG', string $reason = ''): array
     {
-        if (!$this->isValidUuid($origEcocashRef)) {
-            throw new EcocashValidationException('origionalEcocashTransactionReference must be a valid UUID');
+        if (!$this->isValidUuid($originalEcocashRef)) {
+            throw new EcocashValidationException('`originalEcocashTransactionReference` must be a valid UUID.');
         }
-
+        
         $payload = [
-            'origionalEcocashTransactionReference' => $origEcocashRef,
-            'refundCorelator' => $refundCorrelator,
-            'sourceMobileNumber' => $sourceMobileNumber,
+            'originalEcocashTransactionReference' => $originalEcocashRef,
+            'refundCorrelator' => $refundCorrelator,
+            'sourceMobileNumber' => self::normalizeMsisdn($sourceMobileNumber),
             'amount' => $this->normalizeAmount($amount),
             'clientName' => $clientName,
             'currency' => $currency,
             'reasonForRefund' => $reason,
         ];
 
-        $path = sprintf('/api/v2/refund/instant/c2b/%s', $this->mode);
+        $path = "/api/v2/refund/instant/c2b/{$this->mode}";
         return $this->request('POST', $path, $payload);
     }
 
     /**
-     * Lookup a transaction status
+     * Look up the status of a C2B transaction.
      *
-     * @param string $sourceMobileNumber
-     * @param string $sourceReference UUID
+     * @param string $sourceMobileNumber The mobile number associated with the transaction.
+     * @param string $sourceReference The unique UUID used for the payment.
+     *
+     * @return array The decoded JSON response from the API.
+     *
+     * @throws EcocashValidationException If the UUID is invalid.
+     * @throws EcocashException If the API request fails.
      */
     public function lookup(string $sourceMobileNumber, string $sourceReference): array
     {
         if (!$this->isValidUuid($sourceReference)) {
-            throw new EcocashValidationException('sourceReference must be a valid UUID');
+            throw new EcocashValidationException('`sourceReference` must be a valid UUID.');
         }
 
         $payload = [
-            'sourceMobileNumber' => $sourceMobileNumber,
+            'sourceMobileNumber' => self::normalizeMsisdn($sourceMobileNumber),
             'sourceReference' => $sourceReference,
         ];
 
-        $path = sprintf('/api/v1/transaction/c2b/status/%s', $this->mode);
+        $path = "/api/v1/transaction/c2b/status/{$this->mode}";
         return $this->request('POST', $path, $payload);
     }
 
     /**
-     * Generic HTTP request helper using cURL
+     * Normalizes a mobile number to the Zimbabwean international format (e.g., '26377xxxxxxx').
+     *
+     * @param string $msisdn The mobile number to normalize.
+     * @return string The normalized mobile number.
+     */
+    public static function normalizeMsisdn(string $msisdn): string
+    {
+        $msisdn = preg_replace('/[^0-9]/', '', $msisdn);
+        
+        if (str_starts_with($msisdn, '0')) {
+            return '263' . ltrim($msisdn, '0');
+        }
+
+        return $msisdn;
+    }
+    
+    /**
+     * Generic HTTP request helper using cURL.
+     *
+     * @throws EcocashNetworkException If cURL fails to connect.
+     * @throws EcocashException If the API returns an error or invalid JSON.
      */
     private function request(string $method, string $path, array $payload = []): array
     {
-        $url = rtrim($this->baseUrl, '/') . $path;
         $ch = curl_init();
-
-        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        if ($json === false) {
-            throw new EcocashException('Failed to encode payload to JSON');
+        $url = "{$this->baseUrl}{$path}";
+        
+        try {
+            $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (JsonException $e) {
+            throw new EcocashException('Failed to encode payload to JSON: ' . $e->getMessage(), 0, $e);
         }
 
         $headers = [
             'Content-Type: application/json',
-            'X-API-KEY: ' . $this->apiKey,
+            "X-API-KEY: {$this->apiKey}",
         ];
 
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-
-        if (strtoupper($method) === 'POST') {
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
-        } else {
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-        }
-
-        // Optional: follow redirects
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 
-        $responseBody = curl_exec($ch);
-        $curlErr = curl_error($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($method === 'POST') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
+        }
 
+        $responseBody = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
         curl_close($ch);
 
         if ($responseBody === false) {
-            throw new EcocashException('cURL error: ' . $curlErr);
+            throw new EcocashNetworkException("cURL error: {$curlErr}");
         }
 
-        $decoded = json_decode($responseBody, true);
-
-        // If it's not JSON, return raw body in standardized array
-        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
-            // Some endpoints may return plain text or HTML for errors
-            throw new EcocashException("Invalid JSON response (HTTP {$httpCode}): {$responseBody}");
+        try {
+            $decoded = json_decode($responseBody, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $e) {
+            // API may return non-JSON responses for some errors
+            if ($httpCode >= 400) {
+                 throw new EcocashException("HTTP {$httpCode}: {$responseBody}");
+            }
+            throw new EcocashException("Invalid JSON response (HTTP {$httpCode}): " . $e->getMessage(), 0, $e);
         }
 
-        // Map HTTP codes to exceptions as appropriate
         if ($httpCode >= 400) {
-            $message = $decoded['message'] ?? $decoded['responseMessage'] ?? ($decoded['error'] ?? 'Request failed');
+            $message = $decoded['message'] ?? $decoded['responseMessage'] ?? $decoded['error'] ?? 'Unknown error';
             throw new EcocashException(sprintf('HTTP %d: %s', $httpCode, $message));
         }
 
@@ -195,48 +240,36 @@ class EcocashClient
     }
 
     /**
-     * Normalize amount to number (two decimal places) - keeps floats but formats for JSON
+     * Normalizes a float amount to two decimal places.
      */
     private function normalizeAmount(float $amount): float
     {
         return round($amount, 2);
     }
-
+    
     /**
-     * Validate UUID v4-ish pattern (basic)
+     * Validates a UUID v4 string.
      */
     private function isValidUuid(string $uuid): bool
     {
-        return (bool) preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/', $uuid);
+        return (bool) preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $uuid);
     }
 
     /**
-     * Generate a v4 UUID (for convenience)
+     * Generates a version 4 UUID.
      */
     private function generateUuidV4(): string
     {
-        $data = random_bytes(16);
-        // set version to 0100
-        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
-        // set bits 6-7 to 10
-        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
-        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
-    }
-
-    /**
-     * Helpful helper to safely format a mobile number if user sends +263 or 263...
-     * (This tries to keep whatever is provided, but can be extended.)
-     */
-    public static function normalizeMsisdn(string $msisdn): string
-    {
-        $s = preg_replace('/[^0-9]/', '', $msisdn);
-        if (strlen($s) === 10 && strpos($s, '0') === 0) {
-            // convert 0774222475 -> 263774222475 (example)
-            // This is region-specific; leave to integrator but provide an example
-            return '263' . ltrim($s, '0');
-        }
-        return $s;
+        return sprintf(
+            '%04x%04x-%04x-4%03x-%04x-%04x%04x%04x',
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0x0fff),
+            mt_rand(0, 0x3fff) | 0x8000,
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0xffff)
+        );
     }
 }
-
-// End of file
