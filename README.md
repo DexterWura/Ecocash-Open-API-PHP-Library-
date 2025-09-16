@@ -15,7 +15,7 @@ A simple, dependency-free PHP library to integrate directly with **Ecocash Open 
 ## ✨ Features
 
 - ✅ **PSR-4 compatible**  
-- ✅ Works with **PHP 7.4+**  
+- ✅ Works with **PHP 8.1**  
 - ✅ Uses **cURL internally** (no external dependencies)  
 - ✅ Supports both **Sandbox** and **Live** environments  
 - ✅ Built-in **UUID generator**  
