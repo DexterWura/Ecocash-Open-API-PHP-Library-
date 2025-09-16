@@ -4,6 +4,8 @@ require_once 'EcocashClient.php';
 
 use Ecocash\EcocashClient;
 use Ecocash\EcocashException;
+use Ecocash\EcocashValidationException;
+use Ecocash\EcocashNetworkException;
 
 $response = null;
 $error = null;
@@ -19,9 +21,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $currency = $_POST['currency'] ?? 'USD';
 
     try {
+        // The method signature remains the same, so no changes are needed here.
         $response = $client->payment($msisdn, $amount, $reason, $currency);
+    } catch (EcocashValidationException $e) {
+        $error = "Validation Error: " . $e->getMessage();
+    } catch (EcocashNetworkException $e) {
+        $error = "Network Error: " . $e->getMessage();
     } catch (EcocashException $e) {
-        $error = $e->getMessage();
+        // This is the general catch-all for other API or client errors.
+        $error = "Ecocash Error: " . $e->getMessage();
     }
 }
 ?>
