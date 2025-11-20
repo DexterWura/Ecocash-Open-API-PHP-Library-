@@ -489,8 +489,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 **Dexter Wurayayi**
 
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Email: your.email@example.com
+- GitHub: [@DexterWura](https://github.com/DexterWura)
 
 ---
 
