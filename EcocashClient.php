@@ -14,7 +14,7 @@
  * Install with Composer: `composer require your-namespace/ecocash-client`
  * or include the file directly.
  *
- * Author: Generated for Dexter Wurayayi
+ * Author: Dexter Wurayayi
  * License: MIT
  */
 
